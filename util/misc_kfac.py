@@ -214,39 +214,55 @@ def save_on_master(*args, **kwargs):
 
 
 def init_distributed_mode(args):
-    if args.dist_on_itp:
-        args.rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
-        args.world_size = int(os.environ['OMPI_COMM_WORLD_SIZE'])
-        args.gpu = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
-        args.dist_url = "tcp://%s:%s" % (os.environ['MASTER_ADDR'], os.environ['MASTER_PORT'])
-        os.environ['LOCAL_RANK'] = str(args.gpu)
-        os.environ['RANK'] = str(args.rank)
-        os.environ['WORLD_SIZE'] = str(args.world_size)
-        # ["RANK", "WORLD_SIZE", "MASTER_ADDR", "MASTER_PORT", "LOCAL_RANK"]
-    elif 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-        args.rank = int(os.environ["RANK"])
-        args.world_size = int(os.environ['WORLD_SIZE'])
-        args.gpu = int(os.environ['LOCAL_RANK'])
-    elif 'SLURM_PROCID' in os.environ:
-        args.rank = int(os.environ['SLURM_PROCID'])
-        args.gpu = args.rank % torch.cuda.device_count()
-    else:
-        print('Not using distributed mode')
-        setup_for_distributed(is_master=True)  # hack
-        args.distributed = False
-        return
-
+    #todo: remove
+    #print("inside distribute init")
+    #print(f"dist_on_itp {args.dist_on_itp}, RANK {'RANK' in os.environ and 'WORLD_SIZE' in os.environ}, SLURM {'SLURM_PROCID' in os.environ}")
+    #print(f"rank {int(os.environ["RANK"])}, size {int(os.environ['WORLD_SIZE'])}, gpu {int(os.environ['LOCAL_RANK'])}")
+    # if args.dist_on_itp:
+    #     args.rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
+    #     args.world_size = int(os.environ['OMPI_COMM_WORLD_SIZE'])
+    #     args.gpu = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
+    #     args.dist_url = "tcp://%s:%s" % (os.environ['MASTER_ADDR'], os.environ['MASTER_PORT'])
+    #     os.environ['LOCAL_RANK'] = str(args.gpu)
+    #     os.environ['RANK'] = str(args.rank)
+    #     os.environ['WORLD_SIZE'] = str(args.world_size)
+    #     # ["RANK", "WORLD_SIZE", "MASTER_ADDR", "MASTER_PORT", "LOCAL_RANK"]
+    # elif 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+    #     args.rank = int(os.environ["RANK"])
+    #     args.world_size = int(os.environ['WORLD_SIZE'])
+    #     args.gpu = int(os.environ['LOCAL_RANK'])
+    # elif 'SLURM_PROCID' in os.environ:
+    #     args.rank = int(os.environ['SLURM_PROCID'])
+    #     args.gpu = args.rank % torch.cuda.device_count()
+    # else:
+    #     print('Not using distributed mode')
+    #     setup_for_distributed(is_master=True)  # hack
+    #     args.distributed = False
+    #     return
+    # if 'LOCAL_RANK' in os.environ:
+    #     args.local_rank = int(os.environ['LOCAL_RANK'])
+    
+    
+    # torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
+    #                                      world_size=args.world_size, rank=args.rank)
+    
     args.distributed = True
+    args.dist_backend = 'nccl'
+    torch.distributed.init_process_group(
+        backend=args.dist_backend,
+        init_method=args.dist_url,
+    )
+    if 'LOCAL_RANK' in os.environ:
+        args.local_rank = int(os.environ['LOCAL_RANK'])
+    args.gpu = args.local_rank
+    args.world_size = dist.get_world_size()
+    args.rank = torch.distributed.get_rank()
 
     torch.cuda.set_device(args.gpu)
-    args.dist_backend = 'nccl'
     print('| distributed init (rank {}): {}, gpu {}'.format(
         args.rank, args.dist_url, args.gpu), flush=True)
-    torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                         world_size=args.world_size, rank=args.rank)
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
-
 
 class NativeScalerWithGradNormCount:
     state_dict_key = "amp_scaler"
@@ -334,7 +350,14 @@ def load_model(args, model_without_ddp, optimizer, preconditioner, loss_scaler):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.resume, map_location='cpu', check_hash=True)
         else:
-            checkpoint = torch.load(args.resume, map_location='cpu')
+            args.checkpoint_format = os.path.join(Path(args.output_dir)/ ('checkpoint-{epoch}.pth'))
+            args.resume = 0
+            for try_epoch in range(args.epochs, 0, -1):
+                if os.path.exists(args.checkpoint_format.format(epoch=try_epoch)):
+                    args.resume = try_epoch
+                    filepath = args.checkpoint_format.format(epoch=try_epoch)
+                    checkpoint = torch.load(filepath, map_location='cpu')
+                    break
         model_without_ddp.load_state_dict(checkpoint['model'])
         print("Resume checkpoint %s" % args.resume)
         if 'optimizer' in checkpoint and 'epoch' in checkpoint and not (hasattr(args, 'eval') and args.eval):

@@ -124,6 +124,12 @@ def get_args_parser():
         default=1,
         help='iters between update kronecker factors',
     )
+    parser.add_argument(
+        '--kfac-inv-method',
+        action='store_true',
+        default=False,
+        help='Use inverse KFAC update instead of eigen (default False)',
+    )
     kfac_group.add_argument(
         '--factor-decay',
         type=float,
@@ -146,14 +152,34 @@ def get_args_parser():
         '--skip-layers',
         nargs='+',
         type=str,
-        default=['embedding', 'decoder', 'self_attn'],
+        default=['embedding', 'decoder'],
         help='layers to skip KFAC registration for',
+    )
+    parser.add_argument(
+        '--kfac-colocate-factors',
+        action='store_true',
+        default=True,
+        help='Compute A and G for a single layer on the same worker. ',
     )
     kfac_group.add_argument(
         '--strategy',
         choices=['MEM_OPT', 'HYBRID_OPT', 'COMM_OPT'],
         default='COMM_OPT',
         help='distribution strategy for KFAC computations',
+    )
+    parser.add_argument(
+        '--kfac-grad-worker-fraction',
+        type=float,
+        default=0.25,
+        help='Fraction of workers to compute the gradients '
+        'when using HYBRID_OPT (default: 0.25)',
+    )
+
+    parser.add_argument(
+        '--backend',
+        type=str,
+        default='nccl',
+        help='backend for distribute training (default: nccl)',
     )
 
     return parser
@@ -246,7 +272,17 @@ def main(args):
      # todo: add preconditioner
     preconditioner: kfac.preconditioner.KFACPreconditioner | None = None
     if args.kfac:
-        strategy = kfac.enums.DistributedStrategy[args.strategy.upper()]
+        grad_worker_fraction: kfac.enums.DistributedStrategy | float
+        if args.kfac_strategy == 'comm-opt':
+            grad_worker_fraction = kfac.enums.DistributedStrategy.COMM_OPT
+        elif args.kfac_strategy == 'mem-opt':
+            grad_worker_fraction = kfac.enums.DistributedStrategy.MEM_OPT
+        elif args.kfac_strategy == 'hybrid-opt':
+            grad_worker_fraction = args.kfac_grad_worker_fraction
+        else:
+            raise ValueError(
+                f'Unknown KFAC Comm Method: {args.kfac_strategy}',
+            )
         preconditioner = kfac.preconditioner.KFACPreconditioner(
             model,
             factor_update_steps=args.factor_update_steps,
@@ -255,9 +291,15 @@ def main(args):
             factor_decay=args.factor_decay,
             kl_clip=args.kl_clip,
             lr=lambda x: optimizer.param_groups[0]['lr'],
-            grad_worker_fraction=strategy,
+            grad_worker_fraction=grad_worker_fraction,
             skip_layers=args.skip_layers,
             loglevel=logging.INFO,
+            allreduce_bucket_cap_mb=25,
+            colocate_factors=args.kfac_colocate_factors,
+            compute_method=kfac.enums.ComputeMethod.INVERSE
+            if args.kfac_inv_method
+            else kfac.enums.ComputeMethod.EIGEN,
+            grad_scaler=args.grad_scaler if 'grad_scaler' in args else None,
         )
         if torch.distributed.get_rank() == 0:
             print(f'Preconditioner config:\n{preconditioner}')

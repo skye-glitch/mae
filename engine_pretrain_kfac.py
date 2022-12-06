@@ -8,6 +8,8 @@
 # DeiT: https://github.com/facebookresearch/deit
 # BEiT: https://github.com/microsoft/unilm/tree/master/beit
 # --------------------------------------------------------
+from __future__ import annotations
+
 import math
 import sys
 from typing import Iterable
