@@ -163,8 +163,8 @@ def get_args_parser():
     )
     kfac_group.add_argument(
         '--kfac_strategy',
-        choices=['MEM_OPT', 'HYBRID_OPT', 'COMM_OPT'],
-        default='COMM_OPT',
+        choices=['mem-opt', 'hybrid-opt', 'comm-opt'],
+        default='comm-opt',
         help='distribution strategy for KFAC computations',
     )
     parser.add_argument(
