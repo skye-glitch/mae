@@ -206,7 +206,7 @@ def main(args):
         dataset_train, sampler=sampler_train,
         batch_size=args.batch_size,
         #num_workers=args.num_workers,
-        num_workers=0,
+        #num_workers=0,
         pin_memory=args.pin_mem,
         drop_last=True,
     )
@@ -278,7 +278,7 @@ def main(args):
             log_writer=log_writer,
             args=args
         )
-        if args.output_dir and (epoch % 20 == 0 or epoch + 1 == args.epochs):
+        if args.output_dir and (epoch % 15 == 0 or epoch + 1 == args.epochs):
             misc_kfac.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer, 
                 preconditioner=preconditioner, loss_scaler=loss_scaler, epoch=epoch)

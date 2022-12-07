@@ -35,6 +35,7 @@ mpiexec.hydra -np $NNODES -ppn 1 ./scripts/run_mae_kfac.sh --batch_size 171 \
     --blr 1.5e-4 --weight_decay 0.05 \
     --data=/tmp/imagenet \
     --kfac \
-    --output_dir ./output_dir_kfac 
-    #--resume /work/07980/sli4/ls6/mae/output_dir/checkpoint-740.pth
+    --output_dir ./output_dir_kfac \
+    --resume /work/07980/sli4/ls6/mae/output_dir_kfac/checkpoint-195.pth \
+    --log_dir ./output_dir_kfac
        

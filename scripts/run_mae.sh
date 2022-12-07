@@ -25,6 +25,8 @@ PRELOAD+="source switch-cuda.sh 11.3;"
 PRELOAD+="export OMP_NUM_THREADS=$GPU_PER_NODE ; "
 
 
+
+
 LAUNCHER="python -m torch.distributed.launch "
 LAUNCHER+="--nnodes=$NNODES  --nproc_per_node=$GPU_PER_NODE \
 --node_rank=$LOCAL_RANK --master_addr=$MAIN_RANK"

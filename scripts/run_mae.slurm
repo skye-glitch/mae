@@ -16,7 +16,7 @@ NODEFILE=/tmp/hostfile
 scontrol show hostnames  > $NODEFILE
 NNODES=$(< $NODEFILE wc -l)
 
-mpiexec -np 1  ./scripts/copy_and_extract.sh /work/07980/sli4/ls6/data/imagenet-1k.tar /tmp/imagenet
+./scripts/copy_and_extract.sh /work/07980/sli4/ls6/data/imagenet-1k.tar /tmp/imagenet
 
 
 # mpiexec.hydra -np $NNODES -ppn 1 ./scripts/run_mae.sh --batch_size 171 \
@@ -39,4 +39,4 @@ mpiexec.hydra -np $NNODES -ppn 1 ./scripts/run_mae.sh --batch_size 86 \
     --blr 1.5e-4 --weight_decay 0.05 \
     --data_path /tmp/imagenet \
     --accum_iter 4 \
-    --resume /work/07980/sli4/ls6/mae/output_dir/checkpoint-105.pth
+    --resume /work/07980/sli4/ls6/mae/output_dir/checkpoint-195.pth

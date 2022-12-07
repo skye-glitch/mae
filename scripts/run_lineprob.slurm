@@ -20,8 +20,8 @@ NNODES=$(< $NODEFILE wc -l)
 
 
 mpiexec.hydra -np $NNODES -ppn 1 ./scripts/run_lineprob.sh --batch_size 170 \
-    --model vit_huge_patch14 \
-    --finetune /work/07980/sli4/ls6/mae/output_dir/mae_pretrain_vit_huge.pth \
+    --model vit_large_patch16 \
+    --finetune /work/07980/sli4/ls6/mae/output_dir_large/checkpoint-799.pth \
     --epochs 50 \
     --blr 0.1  \
     --weight_decay 0.0 \
