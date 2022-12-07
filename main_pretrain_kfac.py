@@ -162,7 +162,7 @@ def get_args_parser():
         help='Compute A and G for a single layer on the same worker. ',
     )
     kfac_group.add_argument(
-        '--strategy',
+        '--kfac_strategy',
         choices=['MEM_OPT', 'HYBRID_OPT', 'COMM_OPT'],
         default='COMM_OPT',
         help='distribution strategy for KFAC computations',
