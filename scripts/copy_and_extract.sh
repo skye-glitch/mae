@@ -11,11 +11,10 @@
 SOURCE_TAR=$1
 DEST_DIR=$2
 
-
-FULL_CMD="mkdir -p $DEST_DIR; "
-#FULL_CMD+="cp $SOURCE_TAR /dev/shm ; "
+FULL_CMD="mkdir -p $DEST_DIR;"
+#FULL_CMD+="cp $SOURCE_TAR $DEST_DIR ; "
 FULL_CMD+="cd $DEST_DIR ; "
-FULL_CMD+="tar -xf $SOURCE_TAR -C $DEST_DIR; "
+FULL_CMD+="tar -xf $SOURCE_TAR -C $DEST_DIR;"
 
 if [[ -z "${NODEFILE}" ]]; then
     if [[ -n "${SLURM_NODELIST}" ]]; then
@@ -23,6 +22,8 @@ if [[ -z "${NODEFILE}" ]]; then
         scontrol show hostnames $SLURM_NODELIST > $NODEFILE
     elif [[ -n "${COBALT_NODEFILE}" ]]; then
         NODEFILE=$COBALT_NODEFILE
+    elif [[ -n "${PBS_NODEFILE}" ]]; then
+        NODEFILE=$PBS_NODEFILE
     fi
 fi
 if [[ -z "${NODEFILE}" ]]; then
