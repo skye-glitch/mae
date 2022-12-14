@@ -37,6 +37,7 @@ from engine_pretrain_kfac import train_one_epoch
 #todo new import
 import kfac
 import logging
+from apex.optimizers import FusedLAMB
 
 
 def get_args_parser():
@@ -62,6 +63,13 @@ def get_args_parser():
     parser.set_defaults(norm_pix_loss=False)
 
     # Optimizer parameters
+    parser.add_argument(
+        '--optim',
+        default='adamW',
+        type=str,
+        help='optimizer',
+        choices=['adamW', 'lamb'],
+    )
     parser.add_argument('--weight_decay', type=float, default=0.05,
                         help='weight decay (default: 0.05)')
 
@@ -107,12 +115,6 @@ def get_args_parser():
     #todo, add kfac group
     kfac_group = parser.add_argument_group('KFAC Parameters')
     kfac_group.add_argument(
-        '--kfac',
-        action='store_true',
-        default=False,
-        help='enable KFAC preconditioning',
-    )
-    kfac_group.add_argument(
         '--inv-update-steps',
         type=int,
         default=10,
@@ -123,6 +125,12 @@ def get_args_parser():
         type=int,
         default=1,
         help='iters between update kronecker factors',
+    )
+    kfac_group.add_argument(
+        '--firstInv',
+        type=int,
+        default=0,
+        help='first epoch to do inverse',
     )
     parser.add_argument(
         '--kfac-inv-method',
@@ -264,14 +272,16 @@ def main(args):
     
     # following timm: set wd as 0 for bias and norm layers
     param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay)
-    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
+    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95)) if args.optim == 'adamW' \
+        else FusedLAMB(param_groups, lr=args.lr)
     if torch.distributed.get_rank() == 0:
         print(optimizer)
     loss_scaler = NativeScaler()
 
      # todo: add preconditioner
-    preconditioner: kfac.preconditioner.KFACPreconditioner | None = None
-    if args.kfac:
+    preconditioner = None
+    use_kfac = True if args.inv_update_steps > 0 else False
+    if use_kfac:
         grad_worker_fraction: kfac.enums.DistributedStrategy | float
         if args.kfac_strategy == 'comm-opt':
             grad_worker_fraction = kfac.enums.DistributedStrategy.COMM_OPT
@@ -300,6 +310,7 @@ def main(args):
             if args.kfac_inv_method
             else kfac.enums.ComputeMethod.EIGEN,
             grad_scaler=args.grad_scaler if 'grad_scaler' in args else None,
+            firstInv=args.firstInv,
         )
         if torch.distributed.get_rank() == 0:
             print(f'Preconditioner config:\n{preconditioner}')
@@ -321,19 +332,24 @@ def main(args):
             args=args
         )
         if args.output_dir and (epoch % 15 == 0 or epoch + 1 == args.epochs):
+            #todo: remove debug
+            #print("before entering misc")
             misc_kfac.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer, 
                 preconditioner=preconditioner, loss_scaler=loss_scaler, epoch=epoch)
+            #print("exit from  misc")
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                         'epoch': epoch,}
-
+        #todo: remove debug
+        #print("ready to save")
         if args.output_dir and misc_kfac.is_main_process():
             if log_writer is not None:
                 log_writer.flush()
+            #print("after flush")
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
-
+            #print("after save ckpt")
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     if torch.distributed.get_rank() == 0:

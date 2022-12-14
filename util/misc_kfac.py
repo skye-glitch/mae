@@ -270,7 +270,7 @@ class NativeScalerWithGradNormCount:
     def __init__(self):
         self._scaler = torch.cuda.amp.GradScaler()
 
-    def __call__(self, loss, optimizer, preconditioner, clip_grad=None, parameters=None, create_graph=False, update_grad=True):
+    def __call__(self, loss, optimizer, preconditioner, epoch = 0, clip_grad=None, parameters=None, create_graph=False, update_grad=True):
         self._scaler.scale(loss).backward(create_graph=create_graph)
         if update_grad:
             if clip_grad is not None:
@@ -291,7 +291,7 @@ class NativeScalerWithGradNormCount:
                     #     print(name, layer)
                     # print(list(preconditioner._layers.values())[0][1].module)
                     #print(list(preconditioner._layers.values())[0][1].module.module.weight.grad)
-                preconditioner.step()
+                preconditioner.step(epoch)
                 #if torch.distributed.get_rank() == 0:
                     #print(f"after step")
                     #print(list(preconditioner._layers.values())[0][1].module.module.weight.grad)
@@ -329,20 +329,38 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, preconditioner,
     if loss_scaler is not None:
         checkpoint_paths = [output_dir / ('checkpoint-%s.pth' % epoch_name)]
         for checkpoint_path in checkpoint_paths:
+            #print("before to save")
+            #m = model_without_ddp.state_dict()
+            #print('model')
+            #m = optimizer.state_dict()
+            #print('optimizer')
+            #print(f'size of prek is {preconditioner.memory_usage()}')
+            #m = preconditioner.state_dict()
+            #print('preconditioner')
+            #m = epoch
+            #print("epoch")
+            #m = loss_scaler.state_dict()
+            #print("scaler")
+            #m = args
+            #print("args")
             to_save = {
                 'model': model_without_ddp.state_dict(),
                 'optimizer': optimizer.state_dict(),
-                'preconditioner': preconditioner.state_dict(),
+                #'preconditioner': preconditioner.state_dict(),
                 'epoch': epoch,
                 'scaler': loss_scaler.state_dict(),
                 'args': args,
             }
-
+            if preconditioner:
+                to_save['preconditioner'] = preconditioner.state_dict()
+            #todo remove
+            #print('before save in misc')
             save_on_master(to_save, checkpoint_path)
+            #print('after save in misc')
     else:
         client_state = {'epoch': epoch}
         model.save_checkpoint(save_dir=args.output_dir, tag="checkpoint-%s" % epoch_name, client_state=client_state)
-
+        
 
 def load_model(args, model_without_ddp, optimizer, preconditioner, loss_scaler):
     if args.resume:
@@ -352,7 +370,7 @@ def load_model(args, model_without_ddp, optimizer, preconditioner, loss_scaler):
         else:
             args.checkpoint_format = os.path.join(Path(args.output_dir)/ ('checkpoint-{epoch}.pth'))
             args.resume = 0
-            for try_epoch in range(args.epochs, 0, -1):
+            for try_epoch in range(args.epochs, -1, -1):
                 if os.path.exists(args.checkpoint_format.format(epoch=try_epoch)):
                     args.resume = try_epoch
                     filepath = args.checkpoint_format.format(epoch=try_epoch)
