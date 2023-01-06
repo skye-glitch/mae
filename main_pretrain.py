@@ -100,6 +100,9 @@ def get_args_parser():
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://',
                         help='url used to set up distributed training')
+    parser.add_argument('--fp32', default=False, action='store_true',
+                        help='do not use mixed precision')
+
 
     return parser
 
@@ -188,7 +191,7 @@ def main(args):
     optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
     if torch.distributed.get_rank() == 0:
         print(optimizer)
-    loss_scaler = NativeScaler()
+    loss_scaler = NativeScaler(args.fp32)
 
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
 

@@ -268,24 +268,46 @@ def init_distributed_mode(args):
 class NativeScalerWithGradNormCount:
     state_dict_key = "amp_scaler"
 
-    def __init__(self):
-        self._scaler = torch.cuda.amp.GradScaler()
+    def __init__(self, fp32):
+        if not fp32:
+            print('mixed train')
+            self._scaler = torch.cuda.amp.GradScaler()
+        else:
+            print('full precision')
+            self._scaler = None
 
     def __call__(self, loss, optimizer, clip_grad=None, parameters=None, create_graph=False, update_grad=True):
-        self._scaler.scale(loss).backward(create_graph=create_graph)
-        if update_grad:
-            if clip_grad is not None:
-                assert parameters is not None
-                self._scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
-                norm = torch.nn.utils.clip_grad_norm_(parameters, clip_grad)
+        if self._scaler:
+            #print("scaling in scaler")
+            self._scaler.scale(loss).backward(create_graph=create_graph)
+            if update_grad:
+                if clip_grad is not None:
+                    assert parameters is not None
+                    self._scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
+                    norm = torch.nn.utils.clip_grad_norm_(parameters, clip_grad)
+                else:
+                    self._scaler.unscale_(optimizer)
+                    norm = get_grad_norm_(parameters)
+                self._scaler.step(optimizer)
+                self._scaler.update()
             else:
-                self._scaler.unscale_(optimizer)
-                norm = get_grad_norm_(parameters)
-            self._scaler.step(optimizer)
-            self._scaler.update()
+                norm = None
+            return norm
+        
         else:
-            norm = None
-        return norm
+            #print("no scaling in scaler")
+            loss.backward(create_graph=create_graph)
+            if update_grad:
+                if clip_grad is not None:
+                    assert parameters is not None
+                    norm = torch.nn.utils.clip_grad_norm_(parameters, clip_grad)
+                else:
+                    norm = get_grad_norm_(parameters)
+                optimizer.step()
+            else:
+                norm = None
+            return norm
+        
 
     def state_dict(self):
         return self._scaler.state_dict()

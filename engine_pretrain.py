@@ -44,7 +44,12 @@ def train_one_epoch(model: torch.nn.Module,
 
         samples = samples.to(device, non_blocking=True)
 
-        with torch.cuda.amp.autocast():
+        if not args.fp32:
+            #print('using mixed training in engine')
+            with torch.cuda.amp.autocast():
+                loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
+        else:
+            #print('not using mixed training in engine')
             loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
 
         loss_value = loss.item()
