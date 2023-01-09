@@ -39,7 +39,7 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
     exit 1
 fi
 
-INSTALL_FOLDER="/usr/local"  # the location to look for CUDA installations at
+INSTALL_FOLDER="/opt/"  # the location to look for CUDA installations at
 TARGET_VERSION=${1}          # the target CUDA version to switch to (if provided)
 
 # if no version to switch to has been provided, then just print all available CUDA installations

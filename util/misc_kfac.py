@@ -329,20 +329,8 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, preconditioner,
     if loss_scaler is not None:
         checkpoint_paths = [output_dir / ('checkpoint-%s.pth' % epoch_name)]
         for checkpoint_path in checkpoint_paths:
-            #print("before to save")
-            #m = model_without_ddp.state_dict()
-            #print('model')
-            #m = optimizer.state_dict()
-            #print('optimizer')
-            #print(f'size of prek is {preconditioner.memory_usage()}')
-            #m = preconditioner.state_dict()
-            #print('preconditioner')
-            #m = epoch
-            #print("epoch")
-            #m = loss_scaler.state_dict()
-            #print("scaler")
-            #m = args
-            #print("args")
+            if preconditioner:
+                print(f'size of prek is {preconditioner.memory_usage()}')
             to_save = {
                 'model': model_without_ddp.state_dict(),
                 'optimizer': optimizer.state_dict(),
@@ -351,6 +339,7 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, preconditioner,
                 'scaler': loss_scaler.state_dict(),
                 'args': args,
             }
+            #print("ready to put prek in dict")
             if preconditioner:
                 to_save['preconditioner'] = preconditioner.state_dict()
             #todo remove

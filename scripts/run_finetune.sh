@@ -21,11 +21,11 @@
 #
 #       $ ./run_imagenet.sh --epochs 55 --batch-size 128
 #
-
+GPU_PER_NODE=$(lspci | grep NVIDIA | wc -l)
 PRELOAD="module load conda/2022-07-19; "
 PRELOAD+="source /soft/datascience/conda/2022-07-19/mconda3/setup.sh; "
 PRELOAD+="conda activate torch-1.11;"
-PRELOAD+="export OMP_NUM_THREADS=4 ; "
+PRELOAD+="export OMP_NUM_THREADS=$GPU_PER_NODE ; "
 
 # Arguments to the training script are passed as arguments to this script
 CMD="./main_finetune.py $@"
