@@ -269,15 +269,16 @@ class NativeScalerWithGradNormCount:
     state_dict_key = "amp_scaler"
 
     def __init__(self, fp32):
+        self._scaler = torch.cuda.amp.GradScaler()
         if not fp32:
-            print('mixed train')
-            self._scaler = torch.cuda.amp.GradScaler()
+            #print('mixed train')
+            self._use_scaler = True
         else:
-            print('full precision')
-            self._scaler = None
+            #print('full precision')
+            self._use_scaler = False
 
     def __call__(self, loss, optimizer, clip_grad=None, parameters=None, create_graph=False, update_grad=True):
-        if self._scaler:
+        if self._use_scaler:
             #print("scaling in scaler")
             self._scaler.scale(loss).backward(create_graph=create_graph)
             if update_grad:
