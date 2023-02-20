@@ -406,14 +406,14 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler):
 
 def load_model(args, engine):
     if args.resume:
-        args.checkpoint_format = os.path.join(Path(args.output_dir)/ ({epoch}))
-        args.resume = 0
+        args.checkpoint_format = os.path.join(Path(args.output_dir)/ ('{epoch}'))
+        args.start_epoch = 0
         for try_epoch in range(args.epochs, -1, -1):
             if os.path.exists(args.checkpoint_format.format(epoch=try_epoch)):
                 args.resume = try_epoch
                 filepath = args.checkpoint_format.format(epoch=try_epoch)
                 _, client_sd = engine.load_checkpoint(filepath)
-                epoch = client_sd['epoch']
+                args.start_epoch = client_sd['epoch'] + 1
                 args = client_sd['args']
         if torch.distributed.get_rank() == 0:
             print("Resume checkpoint %s" % try_epoch)

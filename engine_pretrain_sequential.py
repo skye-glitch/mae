@@ -21,7 +21,6 @@ from torch.autograd import Variable
 
 def train_one_epoch(engine,
                     data_loader: Iterable, 
-                    # data_iter,
                     tot_steps,
                     optimizer: torch.optim.Optimizer,
                     epoch: int, 
@@ -36,25 +35,26 @@ def train_one_epoch(engine,
 
     if log_writer is not None:
         print('log_dir: {}'.format(log_writer.log_dir))
-
-    #for data_iter_step in range(tot_steps):#(samples, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    
     for data_iter_step, (samples, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
-        #if data_iter_step % accum_iter == 0:
-        lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
-        #todo: speed and loss without pipeline
-        #samples = samples.cuda(misc.get_rank(), non_blocking=True)
-        #todo: speed and loss without pipeline
-        loss = engine.train_batch()
-        #loss = engine(samples)
-        #runs backpropagation
-        #engine.backward(loss)
-        #weight update
-        #engine.step()
+        if args.pipeline_parallel_size > 0:
+            lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
+            loss = engine.train_batch()
+            loss_value = loss.item()
+        else:
+            if data_iter_step % accum_iter == 0:
+                lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
+            samples = samples.cuda(misc.get_rank(), non_blocking=True)
+            loss = engine(samples)
+            #runs backpropagation
+            engine.backward(loss)
+            #weight update
+            engine.step()
         loss_value = loss.item()
 
-        # if not math.isfinite(loss_value):
-        #     print("Loss is {}, stopping training".format(loss_value))
-        #     sys.exit(1)
+        if not math.isfinite(loss_value):
+            print("Loss is {}, stopping training".format(loss_value))
+            sys.exit(1)
 
         metric_logger.update(loss=loss_value)
 

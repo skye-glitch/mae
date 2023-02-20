@@ -30,7 +30,7 @@ import timm.optim.optim_factory as optim_factory
 import util.misc as misc
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
-import models_mae
+import models_mae_sequential
 
 from engine_pretrain import train_one_epoch
 
@@ -108,8 +108,6 @@ def get_args_parser():
 
 
 def main(args):
-    #todo: remove
-    #print("start pretrain")
     misc.init_distributed_mode(args)
 
     if torch.distributed.get_rank() == 0:
@@ -162,7 +160,7 @@ def main(args):
     )
     
     # define the model
-    model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
+    model = models_mae_sequential.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
 
     model.to(device)
 
@@ -185,8 +183,7 @@ def main(args):
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
-    
-    # following timm: set wd as 0 for bias and norm layers
+
     param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay)
     optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
     if torch.distributed.get_rank() == 0:
@@ -228,11 +225,9 @@ def main(args):
 
 
 if __name__ == '__main__':
-   # print("entry point")
     args = get_args_parser()
     args = args.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     
-    #print("stepping into main")
     main(args)

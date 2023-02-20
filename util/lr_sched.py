@@ -16,6 +16,8 @@ def adjust_learning_rate(optimizer, epoch, args):
     for param_group in optimizer.param_groups:
         if "lr_scale" in param_group:
             param_group["lr"] = lr * param_group["lr_scale"]
+            #print(f'lr after scale {lr * param_group["lr_scale"]}')
         else:
             param_group["lr"] = lr
+            #print(f'lr after adjust {lr} inputs {args.lr} {epoch} {args.warmup_epochs}')
     return lr

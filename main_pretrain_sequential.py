@@ -104,7 +104,7 @@ def get_args_parser():
                         help='url used to set up distributed training')
     parser.add_argument('--fp32', default=False, action='store_true',
                         help='do not use mixed precision')
-    parser.add_argument('--pipeline_parallel_size', default=4, type=int, help='number of stages')
+    parser.add_argument('--pipeline_parallel_size', default=4, type=int, help='number of stages, 0 if not using pipeline')
 
 
 
@@ -112,8 +112,6 @@ def get_args_parser():
 
 
 def main(args):
-    #todo: remove
-    #print("start pretrain")
     misc.init_distributed_mode(args)
 
     if torch.distributed.get_rank() == 0:
@@ -139,25 +137,30 @@ def main(args):
     if torch.distributed.get_rank() == 0:
         print(dataset_train)
 
-    global_rank = misc.get_rank()
+    if True:  # args.distributed:
+        num_tasks = misc.get_world_size()
+        global_rank = misc.get_rank()
+        sampler_train = torch.utils.data.DistributedSampler(
+            dataset_train, num_replicas=(num_tasks//args.pipeline_parallel_size)
+                if args.pipeline_parallel_size > 0 else
+                num_tasks, rank=(global_rank//args.pipeline_parallel_size) 
+                if args.pipeline_parallel_size > 0 else global_rank, shuffle=True
+        )
+        if torch.distributed.get_rank() == 0:
+            print("Sampler_train = %s" % str(sampler_train))
+    else:
+        sampler_train = torch.utils.data.RandomSampler(dataset_train)
+        
     if global_rank == 0 and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
         log_writer = SummaryWriter(log_dir=args.log_dir)
     else:
         log_writer = None
 
-    num_tasks = misc.get_world_size()
-    global_rank = misc.get_rank()
-    sampler_train = torch.utils.data.DistributedSampler(
-        dataset_train, num_replicas=num_tasks//args.pipeline_parallel_size, rank=global_rank//args.pipeline_parallel_size, shuffle=True
-    )
-
-    #print(f"local rank is ? {global_rank}")
-    # if torch.distributed.get_rank() == 0:
-    #     print(f"num_replica {num_tasks} rank {global_rank}")
     data_loader_train_ = torch.utils.data.DataLoader(
         dataset_train, sampler=sampler_train,
-        batch_size=args.batch_size*args.accum_iter,
+        batch_size=args.batch_size*args.accum_iter if 
+            args.pipeline_parallel_size > 0 else args.batch_size,
         #num_workers=args.num_workers,
         num_workers=0,
         pin_memory=args.pin_mem,
@@ -167,15 +170,16 @@ def main(args):
     # define the model
     net = models_mae_sequential.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
 
- 
-    from deepspeed.pipe import PipelineModule
-    #layers = [module for module in net.modules()]
-    def join_layers(vision_model):
-        layers = [*vision_model]
-        return layers
-    #todo: speed and loss without pipeline
-    net = PipelineModule(layers=join_layers(net),
-                         num_stages=args.pipeline_parallel_size)
+    if args.pipeline_parallel_size > 0:
+        #init pipeline module
+        from deepspeed.pipe import PipelineModule
+        #layers = [module for module in net.modules()]
+        def join_layers(vision_model):
+            layers = [*vision_model]
+            return layers
+        #todo: speed and loss without pipeline
+        net = PipelineModule(layers=join_layers(net),
+                            num_stages=args.pipeline_parallel_size)
 
     # following timm: set wd as 0 for bias and norm layers
     param_groups = optim_factory.add_weight_decay(net, args.weight_decay)
@@ -186,21 +190,17 @@ def main(args):
         model=net,
         model_parameters=param_groups,
         training_data=dataset_train)
-        #lr_scheduler=lr_sched)
 
     
-    eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size() // args.pipeline_parallel_size
+    eff_batch_size = (args.batch_size * args.accum_iter * 
+        misc.get_world_size() // args.pipeline_parallel_size)  if args.pipeline_parallel_size > 0 else (args.batch_size * args.accum_iter * misc.get_world_size())
     
     if args.lr is None:  # only base_lr is specified
         args.lr = args.blr * eff_batch_size / 256
 
-    #optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
     for param_group in optimizer.param_groups:
         param_group["lr"] = args.lr
-
-    # if torch.distributed.get_rank() == 0:
-    #     print(vars(optimizer))   
-
+   
     if torch.distributed.get_rank() == 0:
         print("base lr: %.2e" % (args.lr * 256 / eff_batch_size))
         print("actual lr: %.2e" % args.lr)
@@ -213,15 +213,8 @@ def main(args):
         print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
     step_per_epoch = len(dataset_train)//eff_batch_size
-    #print(f'calc right ? {step_per_epoch} len {len(dataset_train)} batc size {eff_batch_size}')
-    #print(f'what does data look like?')
-    #data_iter = iter(data_loader_train)
-    # for i, (samples, _) in enumerate(data_iter):
-    #     print(f'whats in iter? {i} {samples.shape} {_.shape} samples:{samples} target?{_}')
-    #     break
-    #print(f'data loader is {vars(data_loader_train)} {data_loader_train}')
     for epoch in range(args.start_epoch, args.epochs):
-        #data_loader_train.sampler.set_epoch(epoch)
+        data_loader_train_.sampler.set_epoch(epoch)
         train_stats = train_one_epoch(
             engine,
             data_loader_train_,
@@ -257,7 +250,6 @@ def main(args):
 
 
 if __name__ == '__main__':
-   # print("entry point")
     args = get_args_parser()
     deepspeed.init_distributed(dist_backend='nccl')
     # Include DeepSpeed configuration arguments
@@ -268,5 +260,4 @@ if __name__ == '__main__':
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     
-    #print("stepping into main")
     main(args)
