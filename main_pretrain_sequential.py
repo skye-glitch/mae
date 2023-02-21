@@ -157,16 +157,7 @@ def main(args):
     else:
         log_writer = None
 
-    data_loader_train_ = torch.utils.data.DataLoader(
-        dataset_train, sampler=sampler_train,
-        batch_size=args.batch_size*args.accum_iter if 
-            args.pipeline_parallel_size > 0 else args.batch_size,
-        #num_workers=args.num_workers,
-        num_workers=0,
-        pin_memory=args.pin_mem,
-        drop_last=True,
-    )
-
+   
     # define the model
     net = models_mae_sequential.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
 
@@ -212,12 +203,12 @@ def main(args):
     if torch.distributed.get_rank() == 0:
         print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
-    step_per_epoch = len(dataset_train)//eff_batch_size
+    step_per_epoch = (len(dataset_train)//eff_batch_size) if args.pipeline_parallel_size > 0 else (len(dataset_train)//eff_batch_size * args.accum_iter)
     for epoch in range(args.start_epoch, args.epochs):
-        data_loader_train_.sampler.set_epoch(epoch)
+        #data_loader_train_.sampler.set_epoch(epoch)
         train_stats = train_one_epoch(
             engine,
-            data_loader_train_,
+            data_loader_train,
             step_per_epoch,
             optimizer,
             epoch,
