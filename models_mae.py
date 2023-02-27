@@ -161,12 +161,15 @@ class MaskedAutoencoderViT(nn.Module):
         cls_token = self.cls_token + self.pos_embed[:, :1, :]
         cls_tokens = cls_token.expand(x.shape[0], -1, -1)
         x = torch.cat((cls_tokens, x), dim=1)
-
+        #todo: delete test
+        #print(f'shape of output embedding is {x.shape}')
         # apply Transformer blocks
         for blk in self.blocks:
             x = blk(x)
+        #todo: delete test
+        #print(f'shape of output blk is {x.shape}')
         x = self.norm(x)
-
+        #print(f'shape of output ebd head is {x.shape}')
         return x, mask, ids_restore
 
     def forward_decoder(self, x, ids_restore):
@@ -182,9 +185,13 @@ class MaskedAutoencoderViT(nn.Module):
         # add pos embed
         x = x + self.decoder_pos_embed
 
+        #todo: delete test
+        #print(f'shape of output decoder embedding is {x.shape}')
         # apply Transformer blocks
         for blk in self.decoder_blocks:
             x = blk(x)
+        #todo: delete test
+        #print(f'shape of output decoder block is {x.shape}')
         x = self.decoder_norm(x)
 
         # predictor projection

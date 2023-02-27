@@ -27,12 +27,14 @@ import timm
 assert timm.__version__ == "0.3.2"  # version check
 import timm.optim.optim_factory as optim_factory
 
-import util.misc as misc
-from util.misc import NativeScalerWithGradNormCount as NativeScaler
+import util.misc_sequential as misc
+#from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
 import models_mae_sequential
 
-from engine_pretrain import train_one_epoch
+from engine_pretrain_sequential import train_one_epoch
+import util.lr_sched as lr_sched
+import deepspeed
 
 
 def get_args_parser():
@@ -41,7 +43,7 @@ def get_args_parser():
                         help='Batch size per GPU (effective batch size is batch_size * accum_iter * # gpus')
     parser.add_argument('--epochs', default=400, type=int)
     parser.add_argument('--accum_iter', default=1, type=int,
-                        help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
+                        help='Move it to deepspeed setup! Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
 
     # Model parameters
     parser.add_argument('--model', default='mae_vit_large_patch16', type=str, metavar='MODEL',
@@ -102,6 +104,8 @@ def get_args_parser():
                         help='url used to set up distributed training')
     parser.add_argument('--fp32', default=False, action='store_true',
                         help='do not use mixed precision')
+    parser.add_argument('--pipeline_parallel_size', default=4, type=int, help='number of stages, 0 if not using pipeline')
+
 
 
     return parser
@@ -114,7 +118,7 @@ def main(args):
         print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
         print("{}".format(args).replace(', ', ',\n'))
 
-    device = torch.device(args.device)
+    #device = torch.device(args.device)
 
     # fix the seed for reproducibility
     seed = args.seed + misc.get_rank()
@@ -137,42 +141,57 @@ def main(args):
         num_tasks = misc.get_world_size()
         global_rank = misc.get_rank()
         sampler_train = torch.utils.data.DistributedSampler(
-            dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+            dataset_train, num_replicas=(num_tasks//args.pipeline_parallel_size)
+                if args.pipeline_parallel_size > 0 else
+                num_tasks, rank=(global_rank//args.pipeline_parallel_size) 
+                if args.pipeline_parallel_size > 0 else global_rank, shuffle=True
         )
         if torch.distributed.get_rank() == 0:
             print("Sampler_train = %s" % str(sampler_train))
     else:
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
-
+        
     if global_rank == 0 and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
         log_writer = SummaryWriter(log_dir=args.log_dir)
     else:
         log_writer = None
 
-    data_loader_train = torch.utils.data.DataLoader(
-        dataset_train, sampler=sampler_train,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        #num_workers=0,
-        pin_memory=args.pin_mem,
-        drop_last=True,
-    )
-    
+   
     # define the model
-    model = models_mae_sequential.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
+    net = models_mae_sequential.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
 
-    model.to(device)
+    if args.pipeline_parallel_size > 0:
+        #init pipeline module
+        from deepspeed.pipe import PipelineModule
+        #layers = [module for module in net.modules()]
+        def join_layers(vision_model):
+            layers = [*vision_model]
+            return layers
+        #todo: speed and loss without pipeline
+        net = PipelineModule(layers=join_layers(net),
+                            num_stages=args.pipeline_parallel_size)
 
-    model_without_ddp = model
-    if torch.distributed.get_rank() == 0:
-        print("Model = %s" % str(model_without_ddp))
+    # following timm: set wd as 0 for bias and norm layers
+    param_groups = optim_factory.add_weight_decay(net, args.weight_decay)
+   
+    
+    engine, optimizer, data_loader_train, __ = deepspeed.initialize(
+        args=args,
+        model=net,
+        model_parameters=param_groups,
+        training_data=dataset_train)
 
-    eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
+    
+    eff_batch_size = (args.batch_size * args.accum_iter * 
+        misc.get_world_size() // args.pipeline_parallel_size)  if args.pipeline_parallel_size > 0 else (args.batch_size * args.accum_iter * misc.get_world_size())
     
     if args.lr is None:  # only base_lr is specified
         args.lr = args.blr * eff_batch_size / 256
 
+    for param_group in optimizer.param_groups:
+        param_group["lr"] = args.lr
+   
     if torch.distributed.get_rank() == 0:
         print("base lr: %.2e" % (args.lr * 256 / eff_batch_size))
         print("actual lr: %.2e" % args.lr)
@@ -180,34 +199,31 @@ def main(args):
         print("accumulate grad iterations: %d" % args.accum_iter)
         print("effective batch size: %d" % eff_batch_size)
 
-    if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
-        model_without_ddp = model.module
-
-    param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay)
-    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
-    if torch.distributed.get_rank() == 0:
-        print(optimizer)
-    loss_scaler = NativeScaler(args.fp32)
-
-    misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
-
+    misc.load_model(args=args, engine=engine)
     if torch.distributed.get_rank() == 0:
         print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
+    step_per_epoch = (len(dataset_train)//eff_batch_size) if args.pipeline_parallel_size > 0 else (len(dataset_train)//eff_batch_size * args.accum_iter)
     for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            data_loader_train.sampler.set_epoch(epoch)
+        #data_loader_train_.sampler.set_epoch(epoch)
         train_stats = train_one_epoch(
-            model, data_loader_train,
-            optimizer, device, epoch, loss_scaler,
+            engine,
+            data_loader_train,
+            step_per_epoch,
+            optimizer,
+            epoch,
             log_writer=log_writer,
-            args=args
+            args=args,
         )
         if args.output_dir and (epoch % 15 == 0 or epoch + 1 == args.epochs):
-            misc.save_model(
-                args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                loss_scaler=loss_scaler, epoch=epoch)
+            output_dir = Path(args.output_dir)
+            epoch_name = str(epoch)
+            checkpoint_path = output_dir
+            to_save = {
+                'epoch': epoch,
+                'args': args,
+            }
+            engine.save_checkpoint(checkpoint_path, epoch_name, client_state=to_save)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                         'epoch': epoch,}
@@ -226,7 +242,12 @@ def main(args):
 
 if __name__ == '__main__':
     args = get_args_parser()
+    deepspeed.init_distributed(dist_backend='nccl')
+    # Include DeepSpeed configuration arguments
+    args = deepspeed.add_config_arguments(args)
     args = args.parse_args()
+    
+    
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     

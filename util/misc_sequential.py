@@ -19,6 +19,7 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 from torch._six import inf
+import deepspeed
 
 
 class SmoothedValue(object):
@@ -32,16 +33,11 @@ class SmoothedValue(object):
         self.deque = deque(maxlen=window_size)
         self.total = 0.0
         self.count = 0
-        # if dist.get_rank() == 0:
-        #     print(f'init count {self.count}')
         self.fmt = fmt
 
     def update(self, value, n=1):
         self.deque.append(value)
-        # if dist.get_rank() == 0:
-        #     print(f'count updated in update {self.count}')
         self.count += n
-        
         self.total += value * n
 
     def synchronize_between_processes(self):
@@ -54,10 +50,7 @@ class SmoothedValue(object):
         dist.barrier()
         dist.all_reduce(t)
         t = t.tolist()
-        # if dist.get_rank() == 0:
-        #     print(f'count updated in sync process {self.count}')
         self.count = int(t[0])
-        
         self.total = t[1]
 
     @property
@@ -72,8 +65,6 @@ class SmoothedValue(object):
 
     @property
     def global_avg(self):
-        # if dist.get_rank() == 0:
-        #     print(f'count is {self.count}')
         return self.total / self.count
 
     @property
@@ -99,8 +90,6 @@ class MetricLogger(object):
         self.delimiter = delimiter
 
     def update(self, **kwargs):
-        # if dist.get_rank() == 0:
-        #     print(f'MetricLogger update')
         for k, v in kwargs.items():
             if v is None:
                 continue
@@ -108,8 +97,8 @@ class MetricLogger(object):
                 v = v.item()
             assert isinstance(v, (float, int))
             self.meters[k].update(v)
-            # print(f'meter count {self.meters[k]} {self.meters[k].count}')
-            
+         #   print(f'meter count {self.meters[k]} {self.meters[k].count}')
+
 
     def __getattr__(self, attr):
         if attr in self.meters:
@@ -134,9 +123,51 @@ class MetricLogger(object):
     def add_meter(self, name, meter):
         self.meters[name] = meter
 
+    def log_every_seq(self, length, print_freq, header=None):
+        i = 0
+        if not header:
+            header = ''
+        start_time = time.time()
+        end = time.time()
+        iter_time = SmoothedValue(fmt='{avg:.4f}')
+        data_time = SmoothedValue(fmt='{avg:.4f}')
+        space_fmt = ':' + str(len(str(length))) + 'd'
+        log_msg = [
+            header,
+            '[{0' + space_fmt + '}/{1}]',
+            'eta: {eta}',
+            '{meters}',
+            'time: {time}',
+            'data: {data}'
+        ]
+        if torch.cuda.is_available():
+            log_msg.append('max mem: {memory:.0f}')
+        log_msg = self.delimiter.join(log_msg)
+        MB = 1024.0 * 1024.0
+        for i in range(length):
+            data_time.update(time.time() - end)
+            iter_time.update(time.time() - end)
+            if i % print_freq == 0 or i == length - 1:
+                eta_seconds = iter_time.global_avg * (length - i)
+                eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+                if torch.cuda.is_available():
+                    print(log_msg.format(
+                        i, length, eta=eta_string,
+                        meters=str(self),
+                        time=str(iter_time), data=str(data_time),
+                        memory=torch.cuda.max_memory_allocated() / MB))
+                else:
+                    print(log_msg.format(
+                        i, length, eta=eta_string,
+                        meters=str(self),
+                        time=str(iter_time), data=str(data_time)))
+            end = time.time()
+        total_time = time.time() - start_time
+        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        print('{} Total time: {} ({:.4f} s / it)'.format(
+            header, total_time_str, total_time / len(iterable)))
+
     def log_every(self, iterable, print_freq, header=None):
-        # if dist.get_rank() == 0:
-        #     print(f'called log_every')
         i = 0
         if not header:
             header = ''
@@ -158,17 +189,12 @@ class MetricLogger(object):
         log_msg = self.delimiter.join(log_msg)
         MB = 1024.0 * 1024.0
         for obj in iterable:
-            #print(f'data_time count {data_time.count} iter_time count {iter_time.count}')
             data_time.update(time.time() - end)
-            
             yield obj
             iter_time.update(time.time() - end)
-            # if dist.get_rank() == 0:
-            #     print(f'data_time count {data_time.count} iter_time count {iter_time.count} {i}')
             if i % print_freq == 0 or i == len(iterable) - 1:
                 eta_seconds = iter_time.global_avg * (len(iterable) - i)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
-                #print(f'ready to print ========= i is {i}')
                 if torch.cuda.is_available():
                     print(log_msg.format(
                         i, len(iterable), eta=eta_string,
@@ -235,23 +261,60 @@ def save_on_master(*args, **kwargs):
 
 
 def init_distributed_mode(args):
+    #todo: remove
+    #print("inside distribute init")
+    #print(f"dist_on_itp {args.dist_on_itp}, RANK {'RANK' in os.environ and 'WORLD_SIZE' in os.environ}, SLURM {'SLURM_PROCID' in os.environ}")
+    #print(f"rank {int(os.environ["RANK"])}, size {int(os.environ['WORLD_SIZE'])}, gpu {int(os.environ['LOCAL_RANK'])}")
+    # if args.dist_on_itp:
+    #     args.rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
+    #     args.world_size = int(os.environ['OMPI_COMM_WORLD_SIZE'])
+    #     args.gpu = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
+    #     args.dist_url = "tcp://%s:%s" % (os.environ['MASTER_ADDR'], os.environ['MASTER_PORT'])
+    #     os.environ['LOCAL_RANK'] = str(args.gpu)
+    #     os.environ['RANK'] = str(args.rank)
+    #     os.environ['WORLD_SIZE'] = str(args.world_size)
+    #     # ["RANK", "WORLD_SIZE", "MASTER_ADDR", "MASTER_PORT", "LOCAL_RANK"]
+    # elif 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+    #     args.rank = int(os.environ["RANK"])
+    #     args.world_size = int(os.environ['WORLD_SIZE'])
+    #     args.gpu = int(os.environ['LOCAL_RANK'])
+    # elif 'SLURM_PROCID' in os.environ:
+    #     args.rank = int(os.environ['SLURM_PROCID'])
+    #     args.gpu = args.rank % torch.cuda.device_count()
+    # else:
+    #     print('Not using distributed mode')
+    #     setup_for_distributed(is_master=True)  # hack
+    #     args.distributed = False
+    #     return
+    # if 'LOCAL_RANK' in os.environ:
+    #     args.local_rank = int(os.environ['LOCAL_RANK'])
+    
+    
+    # torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
+    #                                      world_size=args.world_size, rank=args.rank)
+    
     args.distributed = True
-    args.dist_backend = 'nccl'
-    torch.distributed.init_process_group(
-        backend=args.dist_backend,
-        init_method=args.dist_url,
-    )
+    #args.dist_backend = 'nccl'
+    # torch.distributed.init_process_group(
+    #     backend=args.dist_backend,
+    #     init_method=args.dist_url,
+    # )
+    #deepspeed.init_distributed(dist_backend=args.dist_backend)
     if 'LOCAL_RANK' in os.environ:
         args.local_rank = int(os.environ['LOCAL_RANK'])
     args.gpu = args.local_rank
     args.world_size = dist.get_world_size()
     args.rank = torch.distributed.get_rank()
 
+    # args.gpu = int(args.gpu % 4)
+    # print(f"device rank {args.gpu}")
+    # os.environ["LOCAL_RANK"] = str(args.gpu)
+    # args.local_rank = int(os.environ['LOCAL_RANK'])
     torch.cuda.set_device(args.gpu)
     print('| distributed init (rank {}): {}, gpu {}'.format(
         args.rank, args.dist_url, args.gpu), flush=True)
-    torch.distributed.barrier()
-    setup_for_distributed(args.rank == 0)
+    # torch.distributed.barrier()
+    # setup_for_distributed(args.rank == 0)
 
 
 class NativeScalerWithGradNormCount:
@@ -341,30 +404,20 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler):
         model.save_checkpoint(save_dir=args.output_dir, tag="checkpoint-%s" % epoch_name, client_state=client_state)
 
 
-def load_model(args, model_without_ddp, optimizer, loss_scaler):
+def load_model(args, engine):
     if args.resume:
-        if args.resume.startswith('https'):
-            checkpoint = torch.hub.load_state_dict_from_url(
-                args.resume, map_location='cpu', check_hash=True)
-        else:
-            args.checkpoint_format = os.path.join(Path(args.output_dir)/ ('checkpoint-{epoch}.pth'))
-            args.resume = 0
-            for try_epoch in range(args.epochs, 0, -1):
-                if os.path.exists(args.checkpoint_format.format(epoch=try_epoch)):
-                    args.resume = try_epoch
-                    filepath = args.checkpoint_format.format(epoch=try_epoch)
-                    checkpoint = torch.load(filepath, map_location='cpu')
-                    break
-        model_without_ddp.load_state_dict(checkpoint['model'])
+        args.checkpoint_format = os.path.join(Path(args.output_dir)/ ('{epoch}'))
+        args.start_epoch = 0
+        for try_epoch in range(args.epochs, -1, -1):
+            if os.path.exists(args.checkpoint_format.format(epoch=try_epoch)):
+                args.resume = try_epoch
+                filepath = args.checkpoint_format.format(epoch=try_epoch)
+                _, client_sd = engine.load_checkpoint(filepath)
+                args.start_epoch = client_sd['epoch'] + 1
+                args = client_sd['args']
         if torch.distributed.get_rank() == 0:
-            print("Resume checkpoint %s" % args.resume)
-        if 'optimizer' in checkpoint and 'epoch' in checkpoint and not (hasattr(args, 'eval') and args.eval):
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            args.start_epoch = checkpoint['epoch'] + 1
-            if 'scaler' in checkpoint:
-                loss_scaler.load_state_dict(checkpoint['scaler'])
-            if torch.distributed.get_rank() == 0:
-                print("With optim & sched!")
+            print("Resume checkpoint %s" % try_epoch)
+        
 
 
 def all_reduce_mean(x):
