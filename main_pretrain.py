@@ -30,7 +30,9 @@ import timm.optim.optim_factory as optim_factory
 import util.misc as misc
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
-import models_mae_sequential
+#import model of choise
+import models_mae
+#import models_mae_sequential
 
 from engine_pretrain import train_one_epoch
 
@@ -159,8 +161,9 @@ def main(args):
         drop_last=True,
     )
     
-    # define the model
-    model = models_mae_sequential.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
+    # define the model of choise
+    #model = models_mae_sequential.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
+    model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
 
     model.to(device)
 

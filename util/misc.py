@@ -32,14 +32,10 @@ class SmoothedValue(object):
         self.deque = deque(maxlen=window_size)
         self.total = 0.0
         self.count = 0
-        # if dist.get_rank() == 0:
-        #     print(f'init count {self.count}')
         self.fmt = fmt
 
     def update(self, value, n=1):
         self.deque.append(value)
-        # if dist.get_rank() == 0:
-        #     print(f'count updated in update {self.count}')
         self.count += n
         
         self.total += value * n
@@ -54,8 +50,6 @@ class SmoothedValue(object):
         dist.barrier()
         dist.all_reduce(t)
         t = t.tolist()
-        # if dist.get_rank() == 0:
-        #     print(f'count updated in sync process {self.count}')
         self.count = int(t[0])
         
         self.total = t[1]
@@ -72,8 +66,6 @@ class SmoothedValue(object):
 
     @property
     def global_avg(self):
-        # if dist.get_rank() == 0:
-        #     print(f'count is {self.count}')
         return self.total / self.count
 
     @property
@@ -99,8 +91,6 @@ class MetricLogger(object):
         self.delimiter = delimiter
 
     def update(self, **kwargs):
-        # if dist.get_rank() == 0:
-        #     print(f'MetricLogger update')
         for k, v in kwargs.items():
             if v is None:
                 continue
@@ -108,7 +98,6 @@ class MetricLogger(object):
                 v = v.item()
             assert isinstance(v, (float, int))
             self.meters[k].update(v)
-            # print(f'meter count {self.meters[k]} {self.meters[k].count}')
             
 
     def __getattr__(self, attr):
@@ -135,8 +124,6 @@ class MetricLogger(object):
         self.meters[name] = meter
 
     def log_every(self, iterable, print_freq, header=None):
-        # if dist.get_rank() == 0:
-        #     print(f'called log_every')
         i = 0
         if not header:
             header = ''
@@ -158,17 +145,13 @@ class MetricLogger(object):
         log_msg = self.delimiter.join(log_msg)
         MB = 1024.0 * 1024.0
         for obj in iterable:
-            #print(f'data_time count {data_time.count} iter_time count {iter_time.count}')
             data_time.update(time.time() - end)
             
             yield obj
             iter_time.update(time.time() - end)
-            # if dist.get_rank() == 0:
-            #     print(f'data_time count {data_time.count} iter_time count {iter_time.count} {i}')
             if i % print_freq == 0 or i == len(iterable) - 1:
                 eta_seconds = iter_time.global_avg * (len(iterable) - i)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
-                #print(f'ready to print ========= i is {i}')
                 if torch.cuda.is_available():
                     print(log_msg.format(
                         i, len(iterable), eta=eta_string,
@@ -285,7 +268,6 @@ class NativeScalerWithGradNormCount:
             return norm
         
         else:
-            #print("no scaling in scaler")
             loss.backward(create_graph=create_graph)
             if update_grad:
                 if clip_grad is not None:

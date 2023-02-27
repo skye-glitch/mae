@@ -16,7 +16,6 @@ import torch
 
 import util.misc as misc
 import util.lr_sched as lr_sched
-import torch.distributed as dist
 
 
 def train_one_epoch(model: torch.nn.Module,
@@ -46,13 +45,14 @@ def train_one_epoch(model: torch.nn.Module,
 
         if not args.fp32:
             with torch.cuda.amp.autocast():
-                #loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
+                #use different settings for diffrent models
+                loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
                 #loss = model(samples, mask_ratio=args.mask_ratio)
-                loss = model(samples)
+                #loss = model(samples)
         else:
-            #loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
+            loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
             #loss = model(samples, mask_ratio=args.mask_ratio)
-            loss = model(samples)
+            # loss = model(samples)
 
         loss_value = loss.item()
 
@@ -79,7 +79,6 @@ def train_one_epoch(model: torch.nn.Module,
             """
             epoch_1000x = int((data_iter_step / len(data_loader) + epoch) * 1000)
             log_writer.add_scalar('train_loss', loss_value_reduce, epoch_1000x)
-            log_writer.add_scalar('lr', lr, epoch_1000x)
             log_writer.add_scalar('lr', lr, epoch_1000x)
 
 
