@@ -214,38 +214,6 @@ def save_on_master(*args, **kwargs):
 
 
 def init_distributed_mode(args):
-    #todo: remove
-    #print("inside distribute init")
-    #print(f"dist_on_itp {args.dist_on_itp}, RANK {'RANK' in os.environ and 'WORLD_SIZE' in os.environ}, SLURM {'SLURM_PROCID' in os.environ}")
-    #print(f"rank {int(os.environ["RANK"])}, size {int(os.environ['WORLD_SIZE'])}, gpu {int(os.environ['LOCAL_RANK'])}")
-    # if args.dist_on_itp:
-    #     args.rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
-    #     args.world_size = int(os.environ['OMPI_COMM_WORLD_SIZE'])
-    #     args.gpu = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
-    #     args.dist_url = "tcp://%s:%s" % (os.environ['MASTER_ADDR'], os.environ['MASTER_PORT'])
-    #     os.environ['LOCAL_RANK'] = str(args.gpu)
-    #     os.environ['RANK'] = str(args.rank)
-    #     os.environ['WORLD_SIZE'] = str(args.world_size)
-    #     # ["RANK", "WORLD_SIZE", "MASTER_ADDR", "MASTER_PORT", "LOCAL_RANK"]
-    # elif 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-    #     args.rank = int(os.environ["RANK"])
-    #     args.world_size = int(os.environ['WORLD_SIZE'])
-    #     args.gpu = int(os.environ['LOCAL_RANK'])
-    # elif 'SLURM_PROCID' in os.environ:
-    #     args.rank = int(os.environ['SLURM_PROCID'])
-    #     args.gpu = args.rank % torch.cuda.device_count()
-    # else:
-    #     print('Not using distributed mode')
-    #     setup_for_distributed(is_master=True)  # hack
-    #     args.distributed = False
-    #     return
-    # if 'LOCAL_RANK' in os.environ:
-    #     args.local_rank = int(os.environ['LOCAL_RANK'])
-    
-    
-    # torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-    #                                      world_size=args.world_size, rank=args.rank)
-    
     args.distributed = True
     args.dist_backend = 'nccl'
     torch.distributed.init_process_group(
@@ -280,21 +248,8 @@ class NativeScalerWithGradNormCount:
             else:
                 self._scaler.unscale_(optimizer)
                 norm = get_grad_norm_(parameters)
-            #add preconditioner.step
-            # if torch.distributed.get_rank() == 0:
-            #     print(f"ready to step")
             if preconditioner is not None:
-                #if torch.distributed.get_rank() == 0:
-                    #print(f"preconditioner step {preconditioner.steps}")
-                    #print(f"gradient before step")
-                    # for name, layer in list(preconditioner._layers.values()):
-                    #     print(name, layer)
-                    # print(list(preconditioner._layers.values())[0][1].module)
-                    #print(list(preconditioner._layers.values())[0][1].module.module.weight.grad)
                 preconditioner.step(epoch)
-                #if torch.distributed.get_rank() == 0:
-                    #print(f"after step")
-                    #print(list(preconditioner._layers.values())[0][1].module.module.weight.grad)
             self._scaler.step(optimizer)
             self._scaler.update()
         else:
@@ -339,13 +294,9 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, preconditioner,
                 'scaler': loss_scaler.state_dict(),
                 'args': args,
             }
-            #print("ready to put prek in dict")
             if preconditioner:
                 to_save['preconditioner'] = preconditioner.state_dict()
-            #todo remove
-            #print('before save in misc')
             save_on_master(to_save, checkpoint_path)
-            #print('after save in misc')
     else:
         client_state = {'epoch': epoch}
         model.save_checkpoint(save_dir=args.output_dir, tag="checkpoint-%s" % epoch_name, client_state=client_state)
@@ -358,24 +309,25 @@ def load_model(args, model_without_ddp, optimizer, preconditioner, loss_scaler):
                 args.resume, map_location='cpu', check_hash=True)
         else:
             args.checkpoint_format = os.path.join(Path(args.output_dir)/ ('checkpoint-{epoch}.pth'))
-            args.resume = 0
+            args.resume = -1
             for try_epoch in range(args.epochs, -1, -1):
                 if os.path.exists(args.checkpoint_format.format(epoch=try_epoch)):
                     args.resume = try_epoch
                     filepath = args.checkpoint_format.format(epoch=try_epoch)
                     checkpoint = torch.load(filepath, map_location='cpu')
                     break
-        model_without_ddp.load_state_dict(checkpoint['model'])
-        print("Resume checkpoint %s" % args.resume)
-        if 'optimizer' in checkpoint and 'epoch' in checkpoint and not (hasattr(args, 'eval') and args.eval):
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            args.start_epoch = checkpoint['epoch'] + 1
-            if 'scaler' in checkpoint:
-                loss_scaler.load_state_dict(checkpoint['scaler'])
-            print("With optim & sched!")
-        if 'preconditioner' in checkpoint:
-            preconditioner.load_state_dict(checkpoint['preconditioner'])
-            print("With preconditioner!")
+        if args.resume >= 0:
+            model_without_ddp.load_state_dict(checkpoint['model'])
+            print("Resume checkpoint %s" % args.resume)
+            if 'optimizer' in checkpoint and 'epoch' in checkpoint and not (hasattr(args, 'eval') and args.eval):
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                args.start_epoch = checkpoint['epoch'] + 1
+                if 'scaler' in checkpoint:
+                    loss_scaler.load_state_dict(checkpoint['scaler'])
+                print("With optim & sched!")
+            if 'preconditioner' in checkpoint:
+                preconditioner.load_state_dict(checkpoint['preconditioner'])
+                print("With preconditioner!")
 
 
 def all_reduce_mean(x):

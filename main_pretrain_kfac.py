@@ -37,7 +37,7 @@ from engine_pretrain_kfac import train_one_epoch
 #todo new import
 import kfac
 import logging
-from apex.optimizers import FusedLAMB
+#from apex.optimizers import FusedLAMB
 
 
 def get_args_parser():
@@ -272,8 +272,7 @@ def main(args):
     
     # following timm: set wd as 0 for bias and norm layers
     param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay)
-    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95)) if args.optim == 'adamW' \
-        else FusedLAMB(param_groups, lr=args.lr)
+    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95)) 
     if torch.distributed.get_rank() == 0:
         print(optimizer)
     loss_scaler = NativeScaler()
@@ -332,24 +331,17 @@ def main(args):
             args=args
         )
         if args.output_dir and (epoch % 15 == 0 or epoch + 1 == args.epochs):
-            #todo: remove debug
-            #print("before entering misc")
             misc_kfac.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer, 
                 preconditioner=preconditioner, loss_scaler=loss_scaler, epoch=epoch)
-            #print("exit from  misc")
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                         'epoch': epoch,}
-        #todo: remove debug
-        #print("ready to save")
         if args.output_dir and misc_kfac.is_main_process():
             if log_writer is not None:
                 log_writer.flush()
-            #print("after flush")
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
-            #print("after save ckpt")
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     if torch.distributed.get_rank() == 0:
