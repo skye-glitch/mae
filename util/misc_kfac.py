@@ -237,8 +237,12 @@ class NativeScalerWithGradNormCount:
 
     def __init__(self):
         self._scaler = torch.cuda.amp.GradScaler()
+        self.prev_loss = float("inf")
 
-    def __call__(self, loss, optimizer, preconditioner, epoch = 0, clip_grad=None, parameters=None, create_graph=False, update_grad=True):
+    def __call__(self, loss, optimizer, preconditioner, epoch = 0, clip_grad=None, parameters=None, create_graph=False, update_grad=True, loss_bound=float("inf")):
+        #loss clamping
+        loss=torch.clamp(loss, max=self.prev_loss*(1+loss_bound))
+        self.prev_loss = loss.item()
         self._scaler.scale(loss).backward(create_graph=create_graph)
         if update_grad:
             if clip_grad is not None:

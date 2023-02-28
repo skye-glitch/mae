@@ -182,12 +182,17 @@ def get_args_parser():
         help='Fraction of workers to compute the gradients '
         'when using HYBRID_OPT (default: 0.25)',
     )
-
     parser.add_argument(
         '--backend',
         type=str,
         default='nccl',
         help='backend for distribute training (default: nccl)',
+    )
+    parser.add_argument(
+        '--loss_bound',
+        type=float,
+        default='0.05',
+        help='bounding loss',
     )
 
     return parser

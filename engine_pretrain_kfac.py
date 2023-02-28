@@ -62,7 +62,7 @@ def train_one_epoch(model: torch.nn.Module,
         loss /= accum_iter
         # Todo This is where the backward propagation and optimizer step happens, add preconditioner
         loss_scaler(loss, optimizer, preconditioner, epoch = epoch,parameters=model.parameters(),
-                    update_grad=(data_iter_step + 1) % accum_iter == 0)
+                    update_grad=(data_iter_step + 1) % accum_iter == 0, loss_bound = args.loss_bound)
         if (data_iter_step + 1) % accum_iter == 0:
             optimizer.zero_grad()
 
