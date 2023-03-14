@@ -330,7 +330,7 @@ def load_model(args, model_without_ddp, optimizer, preconditioner, loss_scaler):
                     loss_scaler.load_state_dict(checkpoint['scaler'])
                 print("With optim & sched!")
             if 'preconditioner' in checkpoint:
-                preconditioner.load_state_dict(checkpoint['preconditioner'])
+                preconditioner.load_state_dict(checkpoint['preconditioner'],epoch=args.resume)
                 print("With preconditioner!")
 
 

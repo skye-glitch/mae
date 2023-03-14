@@ -7,7 +7,7 @@ NODEFILE=/tmp/hostfile
 scontrol show hostnames  > $NODEFILE
 
 
-GPU_PER_NODE=$(lspci | grep NVIDIA | wc -l)
+GPU_PER_NODE=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 
 if [[ -z "${NODEFILE}" ]]; then
     RANKS=$NODEFILE
@@ -18,15 +18,14 @@ else
     NNODES=$(< $NODEFILE wc -l)
 fi
 
-PRELOAD="source /work/07980/sli4/ls6/conda/etc/profile.d/conda.sh ; "
-PRELOAD+="conda activate torch-1.11;"
-PRELOAD+="source switch-cuda.sh;"
-PRELOAD+="source switch-cuda.sh 11.3;"
-PRELOAD+="export OMP_NUM_THREADS=$GPU_PER_NODE ; "
+
+PRELOAD="module load python3/3.9; "
+PRELOAD+="source /work2/07980/sli4/frontera/venv/bin/activate;"
+PRELOAD+="export OMP_NUM_THREADS=4 ; "
 
 
 LAUNCHER="python -m torch.distributed.launch "
-LAUNCHER+="--nnodes=$NNODES  --nproc_per_node=$GPU_PER_NODE \
+LAUNCHER+="--nnodes=$NNODES  --nproc_per_node=4 \
 --node_rank=$LOCAL_RANK --master_addr=$MAIN_RANK"
 
 # Combine preload, launcher, and script+args into full command
