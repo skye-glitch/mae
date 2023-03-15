@@ -191,7 +191,7 @@ def get_args_parser():
     parser.add_argument(
         '--loss_bound',
         type=float,
-        default='0.05',
+        default='inf',
         help='bounding loss',
     )
 
